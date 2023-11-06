@@ -1,144 +1,80 @@
-#include <stdbool.h>
 #include <Arduino.h>
-
-#define BUZZER 2
-#define BTN1 3
-#define BTN2 4
-#define BTN3 5
-
-
-
-
-
-// include the library code:
+#include "encoder.hpp"
+#include "page.hpp"
 #include <LiquidCrystal.h>
 
-// initialize the library by associating any needed LCD interface pin
-// with the arduino pin number it is connected to
-//const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
-const int rs = 46, en = 42, d4 = 32, d5 = 30, d6 = 28, d7 = 26;
-LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
-
-
-
-
-// Rotary Encoder Inputs
-#define CLK 6
-#define DT 7
-#define SW 8
-
-int counter = 0;
-int currentStateCLK;
-int lastStateCLK;
-String currentDir="";
-int lastButtonPress=0;
-
-bool moving = true;
-
-void poll() {
-	// Read the current state of CLK
-	currentStateCLK = digitalRead(CLK);
-
-	// If last and current state of CLK are different, then pulse occurred
-	// React to only 1 state change to avoid double count
-	if (currentStateCLK != lastStateCLK  && currentStateCLK == 1) {
-    moving = true;
-		// If the DT state is different than the CLK state then
-		// the encoder is rotating CCW so decrement
-		if (digitalRead(DT) != currentStateCLK) {
-			counter --;
-			currentDir ="CCW";
-		} else {
-			// Encoder is rotating CW so increment
-			counter ++;
-			currentDir ="CW";
-		}
-
-		//Serial.print("Direction: ");
-		//Serial.print(currentDir);
-		//Serial.print(" | Counter: ");
-		//Serial.println(counter);
-	} else {
-    moving = true;
-  }
-
-	// Remember last CLK state
-	lastStateCLK = currentStateCLK;
-
-	// Read the button state
-	int btnState = digitalRead(SW);
-
-	//If we detect LOW signal, button is pressed
-	if (btnState == LOW) {
-		//if 50ms have passed since last LOW pulse, it means that the
-		//button has been pressed, released and pressed again
-		if (millis() - lastButtonPress > 50) {
-			Serial.println("Button pressed!");
-		}
-
-		// Remember last button press event
-		lastButtonPress = millis();
-	}
-
-	// Put in a slight delay to help debounce the reading
-	delay(1);
+int wrapIndex(int i, int max) {
+  return ((i % max) + max) % max;
 }
 
 
+const int numPages = 4;
+int pageIndex = 0;
+Page pages[numPages];
+Page currentPage;
+
+Page keyPage = {"Key", 12, 0, {"A", "A#/Bb", "B", "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab"}};
+Page octavePage = {"Octave", 5, 2, {"1", "2", "3", "4", "5"}};
+Page inversionPage = {"Inversion", 3, 0, {"Root", "1st", "2nd"}};
+Page voicePage = {"Voice", 4, 0, {"Sine", "Square", "Sawtooth", "Triangle"}};
+
+
+
+// initialize the library by associating any needed LCD interface pin
+// with the arduino pin number it is connected to
+const int rs = 46, en = 42, d4 = 32, d5 = 30, d6 = 28, d7 = 26;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+int lastBtnState = HIGH;
+int lastCounterVal = 0;
+
+
 void setup() {
-  pinMode(BUZZER, OUTPUT);
-  pinMode(BTN1, INPUT_PULLUP);
-  pinMode(BTN2, INPUT_PULLUP);
-  pinMode(BTN3, INPUT_PULLUP);
+  pages[0] = keyPage;
+  pages[1] = octavePage;
+  pages[2] = inversionPage;
+  pages[3] = voicePage;
+  currentPage = pages[0];
 
-	// Set encoder pins as inputs
-	pinMode(CLK, INPUT);
-	pinMode(DT, INPUT);
-	pinMode(SW, INPUT_PULLUP);
-	// Read the initial state of CLK
-	lastStateCLK = digitalRead(CLK);
-
+  // put your setup code here, to run once:
+  initEncoder();
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
   // Print a message to the LCD.
-  lcd.print("hello, world!");
-
+  //lcd.print("hello, world!");
   Serial.begin(9600);
 }
 
 
-/*
-float getNoteFreq(int n) {
-  return 440 * pow(2, (n-48)/12)
-}*/
-
-
-int getNumFromButtons(int foursPlace, int twosPlace, int onesPlace) {
-  int result = 0;
-  if (foursPlace == LOW) {
-    result += 4;
-  }
-  if (twosPlace == LOW) {
-    result += 2;
-  }
-  if (onesPlace == LOW) {
-    result += 1;
-  }
-  return result;
-}
-
-
 void loop() {
-  //delay(25);
-  int decimalNum = getNumFromButtons(digitalRead(BTN1), digitalRead(BTN2), digitalRead(BTN3));
-  //Serial.println(decimalNum);
-  
-  poll();
-  // set the cursor to column 0, line 1
-  // (note: line 1 is the second row, since counting begins with 0):
+  // check when button is first pressed (went from HIGH to LOW)
+  if (digitalRead(SW) == LOW && lastBtnState == HIGH) {
+    pageIndex++; // go to next page
+    // wraparound index to keep within range
+    pageIndex = wrapIndex(pageIndex, numPages);
+  }
+
+  lastBtnState = digitalRead(SW);
+
+  Page* currentPage = &pages[pageIndex];
+
+  if (movedCW) {
+    currentPage->selectedIndex++;
+    movedCW = false;
+  }
+  if (movedCCW) {
+    currentPage->selectedIndex--;
+    movedCCW = false;
+  }
+  // wraparound index to keep within range
+  currentPage->selectedIndex = wrapIndex(currentPage->selectedIndex, currentPage->numOptions);
+
+  lcd.setCursor(0, 0);
+  // print the number of seconds since reset:
+  lcd.print(currentPage->title + "             ");
   lcd.setCursor(0, 1);
   // print the number of seconds since reset:
-  lcd.print(counter % 5);
+  lcd.print(getOption(*currentPage, currentPage->selectedIndex) + "             ");
 
+  lastCounterVal = getCounter();
 }
