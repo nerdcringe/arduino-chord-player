@@ -2,10 +2,10 @@
 #include <LiquidCrystal.h>
 #include "encoder.hpp"
 #include "page.hpp"
+#include "theory.hpp"
 
 
 #define BUZZER 3
-
 
 #define BTN1 24
 #define BTN2 28
@@ -24,70 +24,45 @@
 
 int buttonPins[NUM_BUTTONS] = { BTN1, BTN2, BTN3, BTN4, BTN5, BTN6, BTN7, BTN8 };
 int buttonStates[NUM_BUTTONS];
-int currentButtonIndex = -1;
-unsigned long lastArpeggioMillis;
-int arpeggioNum = 0;
+int buttonIndex = -1;
+
+// only one note is played at a time, so chords are made of a sequence of notes (arpeggio)
+int placeInPattern = 0; // the current index in the arpeggio sequence
+unsigned long lastPatternStart; // last time patternIndex changed
 
 
 // initialize the library by associating any needed LCD interface pin
 // with the arduino pin number it is connected to
 const int rs = 51, en = 47, d4 = 43, d5 = 39, d6 = 35, d7 = 31;
 LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
-int lastBtnState = HIGH;
+int lastEncBtnState = HIGH;
 int lastCounterVal = 0;
 
-
-
-int wrapIndex(int i, int max) {
-  return ((i % max) + max) % max;
-}
-
-const int numPages = 4;
-int pageIndex = 0;
-Page pages[numPages];
-Page currentPage;
 
 #define KEY_PAGE 0
 #define OCTAVE_PAGE 1
 #define INVERSION_PAGE 2
 #define PATTERN_PAGE 3
 
-Page keyPage = { "Key", 12, 0, { "A", "A#/Bb", "B", "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab" } };
-Page octavePage = { "Octave", 5, 2, { "1", "2", "3", "4", "5" } };
-Page inversionPage = { "Inversion", 3, 0, { "Root", "1st", "2nd" } };
-Page patternPage = { "Pattern", 3, 0, { "Apeggio", /*"Alberti",*/ "Blip", "Chirp"/*, "Single"*/} };
 
-
-
-
-int scaleSteps[] = {0, 2, 4, 5, 7, 9, 11, 12};
-
-
-bool rootNotesPressed[7] = { false, false, false, false, false, false, false };
-int chords[8][4] = {
-  { 0, 4, 7, 11 },       // I
-  { 0, 3, 7, 10 }, // ii
-  { 0, 3, 7, 10 }, // iii
-  { 0, 4, 7, 11 }, // IV
-  { 0, 4, 7, 10 }, // V
-  { 0, 3, 7, 10 }, // vi
-  { 0, 3, 6, 10 }, // vii dim
-  { 0, 4, 7, 11 },
+const int numPages = 4;
+int pageIndex = 0;
+Page pages[] {
+  { "Key", 12, 0, { "A", "A#/Bb", "B", "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab" } },
+  { "Octave", 5, 2, { "1", "2", "3", "4", "5" } },
+  { "Inversion", 3, 0, { "Root", "1st", "2nd" } },
+  { "Pattern", 5, 0, { "Ascending", "Descending", "Triplet", "Alberti", "Bossa"} }
 };
 
+Page currentPage = pages[0];
 
-float getNoteFreq(int n) {
-  return 440.0 * pow(2, (n) / 12.0);
+
+int wrapIndex(int i, int max) {
+  return ((i % max) + max) % max;
 }
 
 
 void setup() {
-  pages[KEY_PAGE] = keyPage;
-  pages[OCTAVE_PAGE] = octavePage;
-  pages[INVERSION_PAGE] = inversionPage;
-  pages[PATTERN_PAGE] = patternPage;
-  currentPage = pages[0];
-
   pinMode(BUZZER, OUTPUT);
   pinMode(BTN1, INPUT_PULLUP);
   pinMode(BTN2, INPUT_PULLUP);
@@ -107,21 +82,26 @@ void setup() {
   // set up the LCD's number of columns and rows:
   lcd.begin(16, 2);
   // Print a message to the LCD.
-  lastArpeggioMillis = millis();
+  lastPatternStart = millis();
   Serial.begin(9600);
-}
 
+
+  for (int i = 0; i < 4; i++) {
+    Serial.print(ascending.chordNoteIndices[i]);
+  }
+}
 
 
 void loop() {
   // check when button is first pressed (went from HIGH to LOW)
-  if (digitalRead(SW) == LOW && lastBtnState == HIGH) {
+  if (digitalRead(SW) == LOW && lastEncBtnState == HIGH) {
     pageIndex++;  // go to next page
     // wraparound index to keep within range
     pageIndex = wrapIndex(pageIndex, numPages);
   }
-  lastBtnState = digitalRead(SW);
+  lastEncBtnState = digitalRead(SW);
 
+  // change selection on current page
   Page* currentPage = &pages[pageIndex];
   if (movedCW) {
     currentPage->selectedIndex++;
@@ -131,7 +111,7 @@ void loop() {
     currentPage->selectedIndex--;
     movedCCW = false;
   }
-  // wraparound index to keep within range
+  // wraparound selected index to keep within range
   currentPage->selectedIndex = wrapIndex(currentPage->selectedIndex, currentPage->numOptions);
 
   lcd.setCursor(0, 0);
@@ -148,57 +128,52 @@ void loop() {
     int pin = buttonPins[i];
     int state = digitalRead(pin);
     if (state == LOW) {
-      currentButtonIndex = i;
+      buttonIndex = i;
       anyPressed = true;
     }
   }
   if (!anyPressed) {
-    currentButtonIndex = -1;
+    buttonIndex = -1;
   }
 
-  Serial.println(analogRead(DELAY_POT));
-  int delay = 25;
-  if (pages[PATTERN_PAGE].selectedIndex == 0) {
-        delay = 100;
-      }
-      if (pages[PATTERN_PAGE].selectedIndex == 1) {
-        delay = 25;
-      }
-      if (pages[PATTERN_PAGE].selectedIndex == 2) {
-        delay = 1;
-      }
+  int delay = 250 * (analogRead(DELAY_POT) / 1024.0);
 
-  if (currentButtonIndex != -1) {
-    int i = currentButtonIndex;
+  int patternIndex = pages[PATTERN_PAGE].selectedIndex;
+  int chordNoteIndex = patternPtrs[patternIndex]->chordNoteIndices[placeInPattern];
+
+  if (buttonIndex != -1) {
+    int stepsAboveRoot = chords[buttonIndex][chordNoteIndex];
+
+    if (digitalRead(MAJ_MIN_SWITCH) == LOW) {
+      // swap major and minor thirds
+      if (stepsAboveRoot == 4) {
+        stepsAboveRoot = 3; // make major third minor
+      } else if (stepsAboveRoot == 3) {
+        stepsAboveRoot = 4; // make minor third major
+      }
+    }
+
+    if (digitalRead(DIM_SWITCH) == LOW) {
+      if (stepsAboveRoot == 0) {
+        stepsAboveRoot = 1; // move tonic up a half step to make diminished chord
+      }
+    }
+
     int keyOffset = pages[KEY_PAGE].selectedIndex;
     int octaveOffSet = ((pages[OCTAVE_PAGE].selectedIndex-3) * 12);
+    int noteNum = scaleSteps[buttonIndex] + stepsAboveRoot + keyOffset + octaveOffSet;
+    float noteFreq = getNoteFreq(noteNum);
+    tone(BUZZER, noteFreq);
 
-    if (millis() - lastArpeggioMillis > delay) {
-      int stepInChord = chords[i][arpeggioNum];
-
-      if (digitalRead(MAJ_MIN_SWITCH) == LOW) {
-        if (arpeggioNum == 1) { // swap third
-          if (chords[i][arpeggioNum] == 4) { // make major third minor
-            stepInChord = 3;
-          } else if (chords[i][arpeggioNum] == 3) { // make minor third major
-            stepInChord = 4;
-          }
-        }
+    if (millis() - lastPatternStart > delay) {
+      placeInPattern++;
+      if (placeInPattern >= patternPtrs[patternIndex]->numNotes) {
+        placeInPattern = 0;
       }
-
-      int noteNum = scaleSteps[i] + stepInChord + keyOffset + octaveOffSet;
-
-      float noteFreq = getNoteFreq(noteNum);
-      tone(BUZZER, noteFreq);
-
-      arpeggioNum++;
-      if (arpeggioNum >= 4) {
-        arpeggioNum = 0;
-      }
-      lastArpeggioMillis = millis();
+      lastPatternStart = millis();
     }
   } else {
-    arpeggioNum = 0;
+    placeInPattern = 0;
     noTone(BUZZER);
   }
 }
