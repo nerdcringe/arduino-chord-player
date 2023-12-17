@@ -43,4 +43,4 @@ Pattern* patternPtrs[] = {&ascending, &descending, &triplet, &single, &octave, &
 
 
 float getNoteFreq(int n);
-
+int modifyNote(int stepsAboveRoot, bool swapMajMin, bool swapDiminish, bool swapSeventh);

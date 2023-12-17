@@ -8,5 +8,5 @@
 #define SPKR 9
 
 void initKeyRegister();
-byte keyShiftIn();
+int keyShiftIn();
 

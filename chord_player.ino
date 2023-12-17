@@ -6,8 +6,6 @@
 
 
 #define PATTERN_DELAY_POT A7
-/*#define MAJ_MINOR_SW 1
-#define DIM_SWITCH 2*/
 
 
 int wrapIndex(int i, int max) {
@@ -100,12 +98,11 @@ void loop() {
   }
 
 
-  byte incoming = keyShiftIn();
-
+  int incoming = keyShiftIn();
   // count number of keys held
   int numKeysHeld = 0;
   for (int i = 0; i < 8; i++) {
-    if (!(incoming & (1 << i))) {
+    if (!(incoming & 1<<i)) {
       numKeysHeld++;
     }
   }
@@ -117,14 +114,6 @@ void loop() {
 
     if (millis() - lastNoteChangeTime > patternDelay) {
       currentPlaceInPattern++;
-
-        Serial.print(millis());
-        Serial.print("   ");
-        Serial.print(lastNoteChangeTime);
-        Serial.print("   ");
-        Serial.println(patternDelay);
-
-
       if (currentPlaceInPattern >= currentPattern->numNotes) {
         currentPlaceInPattern = 0;
         currentChordInSeq++;
@@ -152,10 +141,18 @@ void loop() {
     int chordNoteIndex = currentPattern->chordNoteIndices[currentPlaceInPattern];
     // find out which note to play by accessing the chord note at the given index
     int stepsAboveRoot = chords[currentKeyRootNum][chordNoteIndex];
+
+    // test for 0s on the second PISO shift register to apply modifiers
+    bool swapMajMin = !(incoming & 1<<8);
+    bool swapDiminish = !(incoming & 1<<9);
+    bool swapSeventh = !(incoming & 1<<10);
+
+    stepsAboveRoot = modifyNote(stepsAboveRoot, swapMajMin, swapDiminish, swapSeventh);
+
+
     // Obtain the current key and octave from their respective settings pages
     int keyOffset = pages[KEY_PAGE].selectedIndex;
     int octaveOffSet = ((pages[OCTAVE_PAGE].selectedIndex-3) * 12);
-
     // find out which note number on the piano to play (1-88)
     int noteNum = scaleSteps[currentKeyRootNum] + stepsAboveRoot + keyOffset + octaveOffSet;
     int noteFreq = getNoteFreq(noteNum); // calculate the frequency in hertz
