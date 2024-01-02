@@ -1,46 +1,48 @@
-#include "pattern.hpp"
+// all diatonic notes given in half steps relative to tonic
+int scaleSteps[] = {0, 2, 4, 5, 7, 9, 11, 12+0, 12+2, 12+4, 12+5, 12+7, 12+9, 12+11, 24, 24+2, 24+4};
 
-
-int scaleSteps[] = {0, 2, 4, 5, 7, 9, 11, 12};
-
-// Each row has the notes of the major scale chords.
-// Each number is the number of half steps above the chord root the note is.
-// Currently, scale steps 1, 3, 5, 7, 8, 9, and 10 are defined
-int chords[8][7] = {
-  // first octave 2nd octave
-  {0, 4, 7, 11,   12, 14, 16}, // I (major)
-  {0, 3, 7, 10,   12, 14, 15}, // ii (minor)
-  {0, 3, 7, 10,   12, 13, 15}, // iii (minor)
-  {0, 4, 7, 11,   12, 14, 16}, // IV (major)
-  {0, 4, 7, 10,   12, 14, 16}, // V (dominant)
-  {0, 3, 7, 10,   12, 14, 15}, // vi (minor)
-  {0, 3, 6, 10,   12, 13, 15}, // vii (diminished)
-  {0, 4, 7, 11,   12, 14, 16}  // I (major)
-};
-
-
+// define diatonic steps in each chord.
+// For example, ROOT is the root note, SECOND is 1 diatonic step above, THIRD is 2 above.
 #define ROOT 0
-#define THIRD 1
-#define DOMINANT 2
-#define SEVENTH 3
-#define HIGH_ROOT 4
-#define NINTH 5
-#define HIGH_THIRD 6
+#define SECOND 1
+#define THIRD 2
+#define FOURTH 3
+#define FIFTH 4
+#define SIXTH 5
+#define SEVENTH 6
+#define HIGH_ROOT 7
+#define NINTH 8
+#define HIGH_THIRD 9
+#define REST -1
 
 
-// Each pattern specifies the number of notes and which indices of the chords[] subarrays to play.
-// For example, {{0, 1, 2, 3}, 4} is a four-note pattern that plays all four notes from lowest to highest.
-Pattern ascending = {4, { ROOT, THIRD, DOMINANT, SEVENTH }};
-Pattern descending = {4,{ SEVENTH, DOMINANT, THIRD, ROOT }};
-Pattern triplet = {3, { ROOT, THIRD, DOMINANT }};
-Pattern single = {1, { ROOT }};
-Pattern octave = {2, { ROOT, HIGH_ROOT }};
-Pattern alberti = {4, { ROOT, DOMINANT, THIRD, DOMINANT }};
-Pattern bossa = {8, { ROOT, SEVENTH, HIGH_THIRD, ROOT, SEVENTH, HIGH_THIRD, HIGH_THIRD, ROOT }};
-Pattern reggaton = {8, { ROOT, ROOT, ROOT, SEVENTH, THIRD, THIRD, DOMINANT, DOMINANT }};
 
-Pattern* patternPtrs[] = {&ascending, &descending, &triplet, &single, &octave, &alberti, &bossa};
+typedef struct pattern_struct {
+  int numNotes;
+  float tempoMultiplier;
+  int diatonicSteps[];
+} Pattern;
+
+
+// Each pattern specifies the number of notes and which chord notes to play
+Pattern single = {1, 1, { ROOT }};
+Pattern octave = {2, 1, { ROOT, HIGH_ROOT }};
+Pattern triad_0 = {3, 1, { ROOT, THIRD, FIFTH }};
+Pattern triad_1 = {3, 1, {THIRD, FIFTH, HIGH_ROOT }};
+Pattern triad_2 = {3, 1, { FIFTH, HIGH_ROOT, HIGH_THIRD }};
+Pattern ascending = {8, 1, { ROOT, THIRD, FIFTH, SEVENTH, ROOT, THIRD, SEVENTH, SIXTH }};
+Pattern descending = {8, 1, { SEVENTH, FIFTH, THIRD, ROOT, SEVENTH, FIFTH, ROOT, SECOND }};
+Pattern alberti = {4, 1, { ROOT, FIFTH, THIRD, FIFTH }};
+Pattern bossa = {8, 1, { ROOT, SEVENTH, HIGH_THIRD, ROOT, SEVENTH, HIGH_THIRD, HIGH_THIRD, ROOT }};
+Pattern reggaeton = {8, 1, { ROOT, ROOT, ROOT, SEVENTH, THIRD, THIRD, FIFTH, FIFTH }};
+Pattern ninths = {6, 1, { ROOT, THIRD, FIFTH, SEVENTH, NINTH, HIGH_THIRD }};
+Pattern doowop = {8, 1, { ROOT, ROOT, REST, ROOT, HIGH_ROOT, HIGH_ROOT, REST, HIGH_ROOT}};
+Pattern strum = {16, 0.5, { ROOT, THIRD, FIFTH, SEVENTH, REST, REST, REST, REST, REST, REST, REST, REST, REST, REST, REST, REST}};
+Pattern randomNotes = {1, 1, {ROOT}};
+int lastRandomNote = 0;
+
+Pattern* patternPtrs[] = {&single, &octave, &triad_0, &triad_1, &triad_2, &ascending, &descending, &alberti, &bossa, &reggaeton, &ninths, &doowop, &strum, &randomNotes};
 
 
 float getNoteFreq(int n);
-int modifyNote(int stepsAboveRoot, bool swapMajMin, bool swapDiminish, bool swapSeventh);
+int modifyNote(int stepsAboveRoot, bool swapMajMin, bool swapDiminish, bool swapSeventh, bool sus4);

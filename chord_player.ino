@@ -1,11 +1,16 @@
 #include <Arduino.h>
 #include "myEncoder.hpp"
-#include "myLCD.hpp"
-#include "keyRegister.hpp"
+#include "outputRegister.hpp"
+#include "inputRegister.hpp"
+#include "signalGen.hpp"
+#include "page.hpp"
 #include "theory.hpp"
 
 
-#define PATTERN_DELAY_POT A7
+#define TEMPO_POT A7
+#define VIBRATO_POT A6
+#define SPKR_VOLTAGE_CTRL A4
+#define SIGNAL_READ A3
 
 
 int wrapIndex(int i, int max) {
@@ -13,17 +18,18 @@ int wrapIndex(int i, int max) {
 }
 
 
-#define KEY_PAGE 0
-#define OCTAVE_PAGE 1
-#define PATTERN_PAGE 2
-#define VOICE_PAGE 3
+#define PATTERN_PAGE 0
+#define VOICE_PAGE 1
+#define OCTAVE_PAGE 2
+#define KEY_PAGE 3
 #define NUM_PAGES 4
 int pageIndex = 0;
 Page pages[] {
+  { "Pattern", 14, 5, { "Single", "Octave", "Triad (Root)", "Triad (1st Inv)", "Triad (2nd Inv)", "Ascending", "Descending",
+    "Alberti", "Bossa", "Reggaeton", "Ninths", "Doo-Wop", "Strum", "Random"} },
+  { "Voice", 3, 0, {"Sine", "Triangle", "Square "} },
+  { "Octave", 6, 3, { "1", "2", "3", "4", "5", "6"} },
   { "Key", 12, 0, { "A", "A#/Bb", "B", "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab" } },
-  { "Octave", 6, 2, { "1", "2", "3", "4", "5", "6"} },
-  { "Pattern", 7, 0, {"1 - Ascending", "2 - Descending", "3 - Triplet", "4 - Single", "5 - Octave", "6 - Alberti", "7 - Bossa"}},
-  { "Voice", 3, 1, {"Square", "Sine", "Triangle"} },
 };
 
 // records the number of note within the current pattern
@@ -69,17 +75,26 @@ void menuRefresh(Page page, bool pageChanged) {
     lcd.setCursor(0, 0);
     lcd.print(page.title);
   }
+  lcd.setCursor(16-5 - (page.numOptions/10) - ((page.selectedIndex+1)/10), 0);
+  lcd.print("  ");
+  lcd.print(page.selectedIndex+1);
+  lcd.print("/");
+  lcd.print(page.numOptions);
   lcd.setCursor(0, 1);
-  lcd.print(getOption(page, page.selectedIndex) + "    ");
+  lcd.print(getOption(page, page.selectedIndex) + "       ");
 }
 
 
 
 void setup() {
   Serial.begin(9600);
-  pinMode(PATTERN_DELAY_POT, INPUT_PULLUP);
+  pinMode(TEMPO_POT, INPUT_PULLUP);
+  pinMode(VIBRATO_POT, INPUT_PULLUP);
+  pinMode(SPKR_VOLTAGE_CTRL, OUTPUT);
+  pinMode(SIGNAL_READ, INPUT);
   initEncoder();
   initKeyRegister();
+  initSignalGen();
   lcd.begin(16, 2);
   menuRefresh(pages[pageIndex], true);
 }
@@ -93,9 +108,24 @@ void loop() {
   
   if (pageChanged || selectionChanged) {
     // wrap around selected index to keep within array range
-    currentPage->selectedIndex = wrapIndex(currentPage->selectedIndex, currentPage->numOptions);
+    //currentPage->selectedIndex = wrapIndex(currentPage->selectedIndex, currentPage->numOptions);
+    currentPage->selectedIndex = max(currentPage->selectedIndex, 0);
+    currentPage->selectedIndex = min(currentPage->selectedIndex, currentPage->numOptions-1);
     menuRefresh(*currentPage, pageChanged);
   }
+
+  
+  if (pages[VOICE_PAGE].selectedIndex == 0) {
+    setWaveform(AD9833_SINE);
+    digitalWrite(SPKR_VOLTAGE_CTRL, HIGH);
+  } else if (pages[VOICE_PAGE].selectedIndex == 1) {
+    setWaveform(AD9833_TRIANGLE);
+    digitalWrite(SPKR_VOLTAGE_CTRL, HIGH);
+  } else if (pages[VOICE_PAGE].selectedIndex == 2) {
+    setWaveform(AD9833_SQUARE1);
+    digitalWrite(SPKR_VOLTAGE_CTRL, LOW);
+  }
+
 
 
   int incoming = keyShiftIn();
@@ -110,10 +140,19 @@ void loop() {
   if (numKeysHeld > 0) {
     Pattern* currentPattern = patternPtrs[pages[PATTERN_PAGE].selectedIndex];
     // Set the pattern delay based on potentiometer value
-    int patternDelay = 250 * (analogRead(PATTERN_DELAY_POT) / 1024.0);
+    float normTempo = map(analogRead(TEMPO_POT), 0, 1023, 0, 10000);
+    normTempo /= 10000;
+    normTempo = normTempo*normTempo; // square the normalized value to make smaller values (faster tempos) closer together
+    normTempo *= 10000;
+    int tempo = map(normTempo, 0, 10000, 15, 750) * currentPattern->tempoMultiplier;
+    //int tempo = map(analogRead(TEMPO_POT), 0, 1023, 3, 500);//400 * (analogRead(TEMPO_POT) / 1023.0);
 
-    if (millis() - lastNoteChangeTime > patternDelay) {
+    if (millis() - lastNoteChangeTime > tempo) {
       currentPlaceInPattern++;
+
+      lastRandomNote = (int)random(0, 11);
+      if (lastRandomNote > 7) lastRandomNote = 0;
+
       if (currentPlaceInPattern >= currentPattern->numNotes) {
         currentPlaceInPattern = 0;
         currentChordInSeq++;
@@ -137,33 +176,56 @@ void loop() {
       }
     }
     
-    // select which note index of the chord to play
-    int chordNoteIndex = currentPattern->chordNoteIndices[currentPlaceInPattern];
-    // find out which note to play by accessing the chord note at the given index
-    int stepsAboveRoot = chords[currentKeyRootNum][chordNoteIndex];
+    // get the number of diatonic steps above the chord root
+    int diatonicStepsAboveRoot = currentPattern->diatonicSteps[currentPlaceInPattern];
+    
+    if (patternPtrs[pages[PATTERN_PAGE].selectedIndex] == &randomNotes) {
+      diatonicStepsAboveRoot = lastRandomNote;
+    }
 
-    // test for 0s on the second PISO shift register to apply modifiers
-    bool swapMajMin = !(incoming & 1<<8);
-    bool swapDiminish = !(incoming & 1<<9);
-    bool swapSeventh = !(incoming & 1<<10);
+    if (diatonicStepsAboveRoot != -1) {
+      // get the number of absolute steps above the tonic note of the scale
+      int stepsAboveTonic = scaleSteps[diatonicStepsAboveRoot + currentKeyRootNum];
 
-    stepsAboveRoot = modifyNote(stepsAboveRoot, swapMajMin, swapDiminish, swapSeventh);
-
-
-    // Obtain the current key and octave from their respective settings pages
-    int keyOffset = pages[KEY_PAGE].selectedIndex;
-    int octaveOffSet = ((pages[OCTAVE_PAGE].selectedIndex-3) * 12);
-    // find out which note number on the piano to play (1-88)
-    int noteNum = scaleSteps[currentKeyRootNum] + stepsAboveRoot + keyOffset + octaveOffSet;
-    int noteFreq = getNoteFreq(noteNum); // calculate the frequency in hertz
-    tone(SPKR, noteFreq); // play tone through speaker
+      // test for 0s on the second PISO shift register to apply modifiers
+      bool swapMajMin = !(incoming & 1<<8);
+      bool diminish = !(incoming & 1<<9);
+      bool swapSeventh = false;//!(incoming & 1<<10);
+      bool sus4 = !(incoming & 1<<10);
+      
+      float vibratoOffset = 0;
+      if (!(incoming & 1<<11)) { // add vibrato through button
+        vibratoOffset = 10*sin(((double)millis())*0.05);
+      }
+      
+      int rootStepsAboveTonic = scaleSteps[currentKeyRootNum]; // subtract this so chord can be modified the same regardless of scale step
+      stepsAboveTonic = modifyNote(stepsAboveTonic - rootStepsAboveTonic, swapMajMin, diminish, swapSeventh, sus4) + rootStepsAboveTonic;
+      
+      // Obtain the current key and octave from their respective settings pages
+      int keyOffset = pages[KEY_PAGE].selectedIndex;
+      int octaveOffSet = ((pages[OCTAVE_PAGE].selectedIndex-3) * 12);
+      // find out which note number on the piano to play (1-88)
+      int noteNum = stepsAboveTonic + keyOffset + octaveOffSet;
+      int noteFreq = getNoteFreq(noteNum) + vibratoOffset; // calculate the frequency in hertz
+      //tone(SPKR, noteFreq); // play tone through speaker
+      
+      setSignalFrequency(noteFreq);
+    } else {
+      //noTone(SPKR);
+      stopSignal();
+    }
 
   } else {
     currentPlaceInPattern = 0;
     currentChordInSeq = 0;
     lastNoteChangeTime = millis();
-    noTone(SPKR);
+    //noTone(SPKR);
+    stopSignal();
   }
+
+  Serial.print("Signal:");
+  Serial.print(analogRead(A3));
+  Serial.println(",");
 
   delay(5);
 }

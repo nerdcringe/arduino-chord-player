@@ -6,7 +6,7 @@ typedef struct page_struct {
   String title;
   int numOptions;
   int selectedIndex;
-  String options[13];
+  char* options[15];
 
 } Page;
 
