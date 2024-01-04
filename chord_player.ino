@@ -1,16 +1,19 @@
 #include <Arduino.h>
 #include "myEncoder.hpp"
+//#include "myOLED.hpp"
 #include "outputRegister.hpp"
 #include "inputRegister.hpp"
 #include "signalGen.hpp"
 #include "page.hpp"
 #include "theory.hpp"
-
+ 
 
 #define TEMPO_POT A7
 #define VIBRATO_POT A6
-#define SPKR_VOLTAGE_CTRL A4
+#define TONE_TRAN A4
 #define SIGNAL_READ A3
+#define CS_AD9833 9 // chip select for AD9833 signal generator
+#define CS_OLED 10 // chip select for OLED display
 
 
 int wrapIndex(int i, int max) {
@@ -25,11 +28,11 @@ int wrapIndex(int i, int max) {
 #define NUM_PAGES 4
 int pageIndex = 0;
 Page pages[] {
-  { "Pattern", 14, 5, { "Single", "Octave", "Triad (Root)", "Triad (1st Inv)", "Triad (2nd Inv)", "Ascending", "Descending",
-    "Alberti", "Bossa", "Reggaeton", "Ninths", "Doo-Wop", "Strum", "Random"} },
+  { "Pattern", 15, 5, { "Single", "Octave", "Triad (Root)", "Triad (1st Inv)", "Triad (2nd Inv)", "Ascending", "Descending",
+    "Alberti", "Bossa", "Reggaeton", "Ninths", "Doo-Wop", "Strum", "Waltz", "Random"} },
   { "Voice", 3, 0, {"Sine", "Triangle", "Square "} },
   { "Octave", 6, 3, { "1", "2", "3", "4", "5", "6"} },
-  { "Key", 12, 0, { "A", "A#/Bb", "B", "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab" } },
+  { "Key", 12, 3, { "A", "A#/Bb", "B", "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab" } },
 };
 
 // records the number of note within the current pattern
@@ -90,12 +93,13 @@ void setup() {
   Serial.begin(9600);
   pinMode(TEMPO_POT, INPUT_PULLUP);
   pinMode(VIBRATO_POT, INPUT_PULLUP);
-  pinMode(SPKR_VOLTAGE_CTRL, OUTPUT);
+  pinMode(TONE_TRAN, OUTPUT);
   pinMode(SIGNAL_READ, INPUT);
   initEncoder();
   initKeyRegister();
-  initSignalGen();
-  lcd.begin(16, 2);
+  initSignalGen(CS_AD9833);
+  initLCD();
+  // /initOLED(CS_OLED);
   menuRefresh(pages[pageIndex], true);
 }
 
@@ -113,19 +117,22 @@ void loop() {
     currentPage->selectedIndex = min(currentPage->selectedIndex, currentPage->numOptions-1);
     menuRefresh(*currentPage, pageChanged);
   }
-
+  /*digitalWrite(CS_AD9833, HIGH);
+  digitalWrite(CS_OLED, LOW);
+  //updateOLED(analogRead(SIGNAL_READ));
+  digitalWrite(CS_AD9833, LOW);
+*/
   
   if (pages[VOICE_PAGE].selectedIndex == 0) {
     setWaveform(AD9833_SINE);
-    digitalWrite(SPKR_VOLTAGE_CTRL, HIGH);
+    digitalWrite(TONE_TRAN, HIGH);
   } else if (pages[VOICE_PAGE].selectedIndex == 1) {
     setWaveform(AD9833_TRIANGLE);
-    digitalWrite(SPKR_VOLTAGE_CTRL, HIGH);
+    digitalWrite(TONE_TRAN, LOW);
   } else if (pages[VOICE_PAGE].selectedIndex == 2) {
     setWaveform(AD9833_SQUARE1);
-    digitalWrite(SPKR_VOLTAGE_CTRL, LOW);
+    digitalWrite(TONE_TRAN, HIGH);
   }
-
 
 
   int incoming = keyShiftIn();
@@ -140,18 +147,18 @@ void loop() {
   if (numKeysHeld > 0) {
     Pattern* currentPattern = patternPtrs[pages[PATTERN_PAGE].selectedIndex];
     // Set the pattern delay based on potentiometer value
-    float normTempo = map(analogRead(TEMPO_POT), 0, 1023, 0, 10000);
+    /*float normTempo = map(analogRead(TEMPO_POT), 0, 1023, 0, 10000);
     normTempo /= 10000;
     normTempo = normTempo*normTempo; // square the normalized value to make smaller values (faster tempos) closer together
     normTempo *= 10000;
-    int tempo = map(normTempo, 0, 10000, 15, 750) * currentPattern->tempoMultiplier;
-    //int tempo = map(analogRead(TEMPO_POT), 0, 1023, 3, 500);//400 * (analogRead(TEMPO_POT) / 1023.0);
+    int tempo = map(normTempo, 0, 10000, 15, 750) * currentPattern->tempoMultiplier;*/
+    int tempo = map(analogRead(TEMPO_POT), 0, 1023, 2, 500) * currentPattern->tempoMultiplier;;//400 * (analogRead(TEMPO_POT) / 1023.0);
 
     if (millis() - lastNoteChangeTime > tempo) {
       currentPlaceInPattern++;
 
       lastRandomNote = (int)random(0, 11);
-      if (lastRandomNote > 7) lastRandomNote = 0;
+      if (lastRandomNote > 6) lastRandomNote = 0;
 
       if (currentPlaceInPattern >= currentPattern->numNotes) {
         currentPlaceInPattern = 0;
@@ -210,6 +217,7 @@ void loop() {
       //tone(SPKR, noteFreq); // play tone through speaker
       
       setSignalFrequency(noteFreq);
+      Serial.println(noteFreq);
     } else {
       //noTone(SPKR);
       stopSignal();
@@ -223,9 +231,9 @@ void loop() {
     stopSignal();
   }
 
-  Serial.print("Signal:");
+  /*Serial.print("Signal:");
   Serial.print(analogRead(A3));
-  Serial.println(",");
+  Serial.println(",");*/
 
   delay(5);
 }

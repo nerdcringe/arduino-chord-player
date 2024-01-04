@@ -6,6 +6,8 @@ float getNoteFreq(int n) {
   return 440.0 * pow(2, (n) / 12.0);
 }
 
+
+
 int modifyNote(int note, bool swapMajMin, bool diminish, bool swapSeventh, bool sus4) {
     if (swapMajMin) {
       if (note == 4) {

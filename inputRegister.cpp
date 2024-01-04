@@ -6,6 +6,12 @@
   (C) 2021, Uri Shaked
 */
  
+ 
+#define dataPin 5   /* Q7 */
+#define clockPin 6  /* CP */
+#define latchPin 7  /* PL */
+ 
+
 
 const int numBits = 16;   /* Set to 8 * number of shift registers */
  

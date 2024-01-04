@@ -1,10 +1,11 @@
 #include "signalGen.hpp"
 
-AD9833 gen(SPI_CS);
+AD9833* gen = NULL;
 uint8_t currentWaveform = AD9833_SQUARE1;
 
-void initSignalGen() {
-  gen.begin();
+void initSignalGen(uint8_t SPI_chipSelect) {
+  gen = &AD9833(SPI_chipSelect);
+  gen->begin();
 }
 
 void setWaveform(uint8_t newWaveform) {
@@ -13,12 +14,12 @@ void setWaveform(uint8_t newWaveform) {
 
 
 void setSignalFrequency(int freqHz) {
-  gen.setFrequency(freqHz);
-  gen.setWave(currentWaveform);
+  gen->setFrequency(freqHz);
+  gen->setWave(currentWaveform);
 }
 
 void stopSignal() {
-  gen.setWave(AD9833_OFF);
+  gen->setWave(AD9833_OFF);
 }
 
 
